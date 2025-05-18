@@ -8,6 +8,9 @@ from cls_model.model import Resnet50
 from dotenv import load_dotenv
 import random
 import torch
+import json
+import websockets
+import asyncio
 
 load_dotenv(dotenv_path='.env')
 
@@ -15,6 +18,14 @@ def set_seed(seed: int):
     random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)  # if using CUDA
+
+async def send_data(text):
+    uri = "ws://localhost:8080"
+    async with websockets.connect(uri) as websocket:
+        data = {"type": "text-input", "payload": text}
+        await websocket.send(json.dumps(data))
+        response = await websocket.recv()
+        print("Received:", response)
 
 set_seed(42)
 
@@ -75,8 +86,8 @@ class VideoProcessor:
             ]
         )
 
-        print("[GPT 回覆]:\n", response.choices[0].message.content)
-        return
+        text = response.choices[0].message.content
+        return text.split("[播報內容]：")[-1].strip()
 
     def process(self, video_path):
         self._init_video(video_path)
@@ -100,7 +111,8 @@ class VideoProcessor:
                         # cv2.imwrite(os.path.join(save_dir, "accident_0.jpg"), accident_frames[0])
                         # cv2.imwrite(os.path.join(save_dir, "accident_1.jpg"), accident_frames[1])
                         # cv2.imwrite(os.path.join(save_dir, "accident_2.jpg"), accident_frames[2])
-                        self.llm(selected)
+                        llm_text = self.llm(selected)
+                        asyncio.run(send_data(llm_text))
                         accident_frames.clear()  # 重置
                         break
                 else:
