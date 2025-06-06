@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 import random
 import torch
 import json
-import websockets
+import time
+# import websockets
 import asyncio
 
 load_dotenv(dotenv_path='.env')
@@ -19,19 +20,21 @@ def set_seed(seed: int):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)  # if using CUDA
 
-async def send_data(text):
-    uri = "ws://localhost:8080"
-    async with websockets.connect(uri) as websocket:
-        data = {"type": "text-input", "payload": text}
-        await websocket.send(json.dumps(data))
-        response = await websocket.recv()
-        print("Received:", response)
+# async def send_data(text):
+#     uri = "ws://localhost:8080"
+#     async with websockets.connect(uri) as websocket:
+#         data = {"type": "text-input", "payload": text}
+#         await websocket.send(json.dumps(data))
+#         response = await websocket.recv()
+#         print("Received:", response)
 
 set_seed(42)
 
 class VideoProcessor:
     def __init__(self, interval_sec=0.5, model=None):
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.client = OpenAI(
+            api_key=os.getenv("GEMINI_API_KEY"),
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
         self.interval_sec = interval_sec
         self.cap = None
         self.fps = None
@@ -52,14 +55,15 @@ class VideoProcessor:
     def predict(self, frame):
         image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         image_pil = Image.fromarray(image_rgb)
-        return self.model.predict(image_pil) == 0 # 0 for Accident, 1 for Non Accident
+        return self.model.predict(image_pil) == 0  # 0 for Accident, 1 for Non Accident
 
     def llm(self, frames):
+        # 這裡把 model 改成 Gemini（以 gemini-1.0 為例）
         content = [
             {
                 "type": "text",
                 "text": (
-                    "以下是從交通監視器中連續擷取的 3 張事故相關畫面，已經確認有事故發生，請用簡潔中文描述畫面內容。"
+                    "以下是從交通監視器中連續擷取的 3 張事故相關畫面，已經確認有事故發生，請用簡潔中文描述畫面內容，包括車輛外型。"
                     "再模仿交通廣播（如警廣 FM）即時播報的語氣，用簡潔、專業的中文結合畫面內容，進行播報。"
                     "時間：7:30 AM、地點：台北市忠孝東路三段。"
                     "將播報內容敘述在「[播報內容]：」後。"
@@ -77,7 +81,7 @@ class VideoProcessor:
             })
 
         response = self.client.chat.completions.create(
-            model="gpt-4o",
+            model="gemini-2.0-flash",  # 改為 Gemini 模型名稱
             messages=[
                 {
                     "role": "user",
@@ -100,19 +104,16 @@ class VideoProcessor:
                 break
             if frame_count % self.frame_interval == 0:
                 if self.predict(frame):
-                    
                     accident_frames.append(frame)  # 保存 frame（copy 避免後續被覆蓋）
                     if len(accident_frames) == 3:
-                        print(f"🚨 連續 3 個事故 frame，執行 LLM 說明")
+                        print(f"🚨 連續 3 個事故 frame，執行 Gemini 說明")
                         selected = [accident_frames[0], accident_frames[1], accident_frames[2]]
-                        # save_dir = "frames"
-                        # os.makedirs(save_dir, exist_ok=True)
-
-                        # cv2.imwrite(os.path.join(save_dir, "accident_0.jpg"), accident_frames[0])
-                        # cv2.imwrite(os.path.join(save_dir, "accident_1.jpg"), accident_frames[1])
-                        # cv2.imwrite(os.path.join(save_dir, "accident_2.jpg"), accident_frames[2])
+                        start = time.time()
                         llm_text = self.llm(selected)
-                        asyncio.run(send_data(llm_text))
+                        end = time.time()
+                        print(f"LLM 處理時間: {end - start:.2f} 秒")
+                        print(llm_text)
+                        # asyncio.run(send_data(llm_text))
                         accident_frames.clear()  # 重置
                         break
                 else:
